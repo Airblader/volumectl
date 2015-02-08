@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+set -eu
+
+function err() {
+  echo "$@" 1>&2
+  exit 1
+}
+
+is_muted() {
+  local result=`amixer -D pulse get Master | grep -o "\[on\]" | head -n1`
+  [[ -z "${result}" ]] && return 0 || return 1
+}
+
+read_volume() {
+  is_muted && {
+    echo 0
+    return
+  }
+
+  amixer -D pulse get Master | grep -o "\[.*%\]" | grep -o "[0-9]*" | head -n1
+}
+
+read_active_sink() {
+  pacmd list-sinks | grep "* index" | awk '{print $3}'
+}
+
+set_volume() {
+  local volume="$1"
+  local sink=`read_active_sink`
+  pactl set-sink-volume ${sink} ${volume}%
+}
+
+toggle_sound() {
+  amixer -D pulse set Master Playback Switch toggle
+}
+
+usage() {
+  echo "volumectl [status|read|set|toggle|list-sinks|set-sink]
+  Helper script to deal with volumes and sound output.
+
+COMMANDS
+  status
+    Print either 'on' or 'muted' depending on the current state.
+  read
+    Prints the current volume in percent. If sound is currently muted,
+    it will be printed as '0'.
+  set
+    Change the volume. Accepts either an absolute new value (e.g., 'set 75')
+    or a relative change (e.g., 'set +5' or 'set -10').
+  toggle
+    Toggle sound (i.e., mute / unmute it).
+  list-sinks
+    Print a list of available outputs.
+  set-sink
+    Set the default sink.
+
+TROUBLESHOOTING
+  - When switching to a new sink, there is no audio anymore.
+    A: Toggle audio output twice."
+}
+
+case "${1:-}" in
+  status)
+    is_muted && echo "muted" || echo "on"
+    ;;
+  read)
+    read_volume
+    ;;
+  set)
+    maxvolume="${MAX_ALLOWED_VOLUME:-200}"
+    volume="${2:-}"
+    [[ -z "${volume}" ]] && err "no volume to set was specified"
+
+    # for increase/decrease, calculate the new absolute value first
+    case "${volume}" in
+      '+'*|'-'*)
+        current=`read_volume`
+        volume=$((${current}${volume:0:1}${volume:1}))
+    esac
+
+    # make sure the new value is in bounds
+    volume=$(($volume>0?$volume:0))
+    volume=$(($volume<$maxvolume?$volume:$maxvolume))
+
+    case "${volume}" in
+      ''|*[!0-9]*)
+        err "volume has to be a number"
+        ;;
+      *)
+        set_volume ${volume}
+        ;;
+    esac
+    ;;
+  toggle)
+    toggle_sound
+    ;;
+  list-sinks)
+    pactl list short sinks
+    ;;
+  set-sink)
+    sink=`echo "${2:-}" | awk '{print $1}'`
+    case "${sink}" in
+      ''|*[!0-9]*)
+        err "sink has to be or start with the sink number"
+        ;;
+      *)
+        pactl set-default-sink ${sink}
+        ;;
+    esac
+    ;;
+  *)
+    usage && exit 1
+    ;;
+esac

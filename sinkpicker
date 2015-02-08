@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -eu
+
+volumectl list-sinks | awk '{print $1" | "$2}' | dmenu -l 10 -i "$@" | xargs volumectl set-sink
